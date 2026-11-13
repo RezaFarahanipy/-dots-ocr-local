@@ -53,6 +53,7 @@ jobs:
       - name: Patch Dots vision attention for CPU-only runtime
         run: |
           python - <<'PY'
+          import ast
           from pathlib import Path
 
           roots = [Path("vendor/dots.ocr/weights/DotsMOCR"), Path("vendor/dots.ocr")]
@@ -67,34 +68,41 @@ jobs:
           for path in files:
               source = path.read_text(encoding="utf-8")
               original = source
-
               direct_import = "from flash_attn import flash_attn_varlen_func"
-              safe_import = """flash_attn_available = True
-          try:
-              from flash_attn import flash_attn_varlen_func
-          except ImportError:
-              flash_attn_available = False
-              flash_attn_varlen_func = None"""
+
               if direct_import in source:
+                  safe_import = "\\n".join([
+                      "flash_attn_available = True",
+                      "try:",
+                      "    from flash_attn import flash_attn_varlen_func",
+                      "except ImportError:",
+                      "    flash_attn_available = False",
+                      "    flash_attn_varlen_func = None",
+                  ])
                   source = source.replace(direct_import, safe_import, 1)
 
-              if "not flash_attn_available" not in source:
+              if "class DotsVisionBlock" in source and "FlashAttention unavailable; using eager CPU attention" not in source:
                   class_pos = source.find("class DotsVisionBlock")
-                  if class_pos < 0:
-                      raise SystemExit(f"DotsVisionBlock not found in {path}")
                   init_pos = source.find("        super().__init__()", class_pos)
-                  if init_pos < 0:
-                      raise SystemExit(f"Block initializer not found in {path}")
-                  insert_pos = init_pos + len("        super().__init__()")
-                  fallback = '''
-          
-                  if attn_implementation == "flash_attention_2" and not flash_attn_available:
-                      attn_implementation = "eager"
-                      print("FlashAttention unavailable; using eager CPU attention")
-                  if attn_implementation == "ascend_fa":
-                      attn_implementation = "eager"
-          '''
-                  source = source[:insert_pos] + fallback + source[insert_pos:]
+                  if init_pos >= 0:
+                      line_end = source.find("\\n", init_pos)
+                      if line_end < 0:
+                          raise SystemExit(f"Could not locate initializer line ending in {path}")
+                      line_start = source.rfind("\\n", 0, init_pos) + 1
+                      indent = source[line_start:init_pos]
+                      fallback_lines = [
+                          indent + 'if attn_implementation == "flash_attention_2" and not flash_attn_available:',
+                          indent + '    attn_implementation = "eager"',
+                          indent + '    print("FlashAttention unavailable; using eager CPU attention")',
+                          indent + 'if attn_implementation == "ascend_fa":',
+                          indent + '    attn_implementation = "eager"',
+                      ]
+                      source = source[:line_end + 1] + "\\n".join(fallback_lines) + "\\n" + source[line_end + 1:]
+
+              try:
+                  ast.parse(source)
+              except SyntaxError as exc:
+                  raise SystemExit(f"Patched Python syntax error in {path}: {exc}")
 
               if source != original:
                   path.write_text(source, encoding="utf-8")
