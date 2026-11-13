@@ -4,12 +4,15 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 import fitz
+
+BASE = Path(__file__).resolve().parent.parent
+load_dotenv(BASE / ".env")
 
 from backend import store
 from backend.engine import status as model_status, run_ocr
 
-BASE = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE / "data" / "uploads"
 RESULT_DIR = BASE / "data" / "results"
 FRONTEND_DIR = BASE / "frontend"
