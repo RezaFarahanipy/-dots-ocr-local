@@ -1,0 +1,173 @@
+name: Dots OCR - uploaded file test
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "Direct download URL for a test PDF or image (publicly accessible)"
+        required: true
+        type: string
+      max_pages:
+        description: "Maximum PDF pages to process (1-10)"
+        required: false
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ocr-file:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DOTS_DEVICE: cpu
+      DOTS_NUM_THREADS: "4"
+      DOTS_MAX_NEW_TOKENS: "1024"
+      DOTS_MODEL_PATH: vendor/dots.ocr/weights/DotsMOCR
+      MAX_PDF_PAGES: ${{ inputs.max_pages }}
+      PDF_DPI: "140"
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install CPU PyTorch and app dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+          python -m pip install transformers==4.56.1 accelerate qwen-vl-utils huggingface_hub modelscope cairosvg
+
+      - name: Download input file
+        env:
+          FILE_URL: ${{ inputs.file_url }}
+        run: |
+          mkdir -p test-output/input test-output/pages
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from urllib.parse import urlparse
+          import urllib.request
+
+          url = os.environ["FILE_URL"].strip()
+          parsed = urlparse(url)
+          if parsed.scheme != "https":
+              raise SystemExit("Only HTTPS direct-download URLs are allowed.")
+          suffix = Path(parsed.path).suffix.lower()
+          if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
+              raise SystemExit("Unsupported file type. Use PDF or a supported image.")
+          target = Path("test-output/input") / ("document" + suffix)
+          request = urllib.request.Request(url, headers={"User-Agent": "DotsOCR-Test/1.0"})
+          with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as out:
+              total = 0
+              while True:
+                  chunk = response.read(1024 * 1024)
+                  if not chunk:
+                      break
+                  total += len(chunk)
+                  if total > 25 * 1024 * 1024:
+                      raise SystemExit("Input file exceeds the 25 MB test limit.")
+                  out.write(chunk)
+          if total == 0:
+              raise SystemExit("Downloaded file is empty.")
+          print(f"Downloaded {target.name}: {total} bytes")
+          PY
+
+      - name: Download official Dots OCR source
+        run: |
+          git clone --depth 1 https://github.com/studio-dots-ai/dots.ocr.git vendor/dots.ocr
+          python -m pip install -e vendor/dots.ocr --no-deps
+
+      - name: Download Dots model weights
+        working-directory: vendor/dots.ocr
+        run: python tools/download_model.py
+
+      - name: Configure Dots for CPU attention
+        run: |
+          python - <<'PY'
+          import ast, json
+          from pathlib import Path
+          model_dir = Path("vendor/dots.ocr/weights/DotsMOCR")
+          config_path = model_dir / "config.json"
+          config = json.loads(config_path.read_text(encoding="utf-8"))
+          config.setdefault("vision_config", {})["attn_implementation"] = "eager"
+          config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+          files = list(model_dir.rglob("modeling_dots_vision.py"))
+          if not files:
+              raise SystemExit("Could not find modeling_dots_vision.py")
+          for path in files:
+              source = path.read_text(encoding="utf-8")
+              patched = source.replace(
+                  "from flash_attn import flash_attn_varlen_func",
+                  "try:\n    from flash_attn import flash_attn_varlen_func\nexcept ImportError:\n    flash_attn_varlen_func = None",
+                  1,
+              )
+              ast.parse(patched)
+              if patched != source:
+                  path.write_text(patched, encoding="utf-8")
+          PY
+
+      - name: Run OCR on image or PDF pages
+        run: |
+          python - <<'PY'
+          import json, os, time
+          from pathlib import Path
+          import fitz
+          from backend.engine import run_ocr
+
+          source = next(Path("test-output/input").iterdir())
+          page_files = []
+          if source.suffix.lower() == ".pdf":
+              pdf = fitz.open(source)
+              limit = max(1, min(10, int(os.getenv("MAX_PDF_PAGES", "3"))))
+              if len(pdf) > limit:
+                  raise SystemExit(f"PDF has {len(pdf)} pages; configured limit is {limit}.")
+              dpi = int(os.getenv("PDF_DPI", "140"))
+              for i, page in enumerate(pdf):
+                  pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72), alpha=False)
+                  target = Path("test-output/pages") / f"page-{i+1:03}.png"
+                  pix.save(target)
+                  page_files.append(target)
+              pdf.close()
+          else:
+              page_files = [source]
+
+          results = []
+          started = time.time()
+          for index, image_path in enumerate(page_files, start=1):
+              print(f"OCR page {index}/{len(page_files)}: {image_path.name}")
+              extracted = run_ocr(str(image_path))
+              results.append({"page": index, "text": extracted})
+              (Path("test-output") / f"page-{index:03}.txt").write_text(extracted, encoding="utf-8")
+
+          report = {
+              "input_file": source.name,
+              "input_type": source.suffix.lower().lstrip("."),
+              "device": "cpu",
+              "pages_processed": len(results),
+              "elapsed_seconds": round(time.time() - started, 2),
+              "pages": results,
+              "text": "\n\n".join(f"--- Page {r['page']} ---\n{r['text']}" for r in results),
+          }
+          Path("test-output/report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+          Path("test-output/result.md").write_text("# Dots OCR result\n\n" + report["text"], encoding="utf-8")
+          print(json.dumps({k:v for k,v in report.items() if k != "pages"}, ensure_ascii=False, indent=2))
+          if not any(r["text"].strip() for r in results):
+              raise SystemExit("OCR returned empty text.")
+          PY
+
+      - name: Upload OCR result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dots-ocr-file-result
+          path: test-output/
+          if-no-files-found: warn
+          retention-days: 7
