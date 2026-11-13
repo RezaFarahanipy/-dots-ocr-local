@@ -50,6 +50,56 @@ jobs:
         working-directory: vendor/dots.ocr
         run: python tools/download_model.py
 
+      - name: Patch Dots vision attention for CPU-only runtime
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          roots = [Path("vendor/dots.ocr/weights/DotsMOCR"), Path("vendor/dots.ocr")]
+          matches = []
+          for root in roots:
+              if root.exists():
+                  matches.extend(root.rglob("modeling_dots_vision.py"))
+          if not matches:
+              raise SystemExit("Could not find modeling_dots_vision.py in downloaded Dots model files")
+
+          patched = 0
+          for path in matches:
+              source = path.read_text(encoding="utf-8")
+              original = source
+
+              direct_import = "from flash_attn import flash_attn_varlen_func"
+              safe_import = """flash_attn_available = True
+          try:
+              from flash_attn import flash_attn_varlen_func
+          except ImportError:
+              flash_attn_available = False
+              flash_attn_varlen_func = None"""
+              if direct_import in source:
+                  source = source.replace(direct_import, safe_import, 1)
+
+              fallback_anchor = '        super().__init__()\\n'
+              block_anchor = 'class DotsVisionBlock'
+              if block_anchor in source and 'flash_attn_available' not in source:
+                  start = source.index(block_anchor)
+                  pos = source.index(fallback_anchor, start) + len(fallback_anchor)
+                  fallback = '''\n        if attn_implementation == "flash_attention_2" and not flash_attn_available:
+                      attn_implementation = "eager"
+                      print("FlashAttention unavailable; using eager CPU attention")
+                  if attn_implementation == "ascend_fa":
+                      attn_implementation = "eager"
+          '''
+                  source = source[:pos] + fallback + source[pos:]
+
+              if source != original:
+                  path.write_text(source, encoding="utf-8")
+                  patched += 1
+                  print(f"Patched CPU fallback: {path}")
+
+          if patched == 0:
+              raise SystemExit("No patch applied. Model source layout differs from expected version.")
+          PY
+
       - name: Create a synthetic OCR test image
         run: |
           mkdir -p test-output
