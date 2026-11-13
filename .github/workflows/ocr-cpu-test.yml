@@ -78,7 +78,7 @@ jobs:
               original = source
               source = source.replace(
                   "from flash_attn import flash_attn_varlen_func",
-                  "try:\\n    from flash_attn import flash_attn_varlen_func\\nexcept ImportError:\\n    flash_attn_varlen_func = None",
+                  "try:\n    from flash_attn import flash_attn_varlen_func\nexcept ImportError:\n    flash_attn_varlen_func = None",
                   1,
               )
               ast.parse(source)
