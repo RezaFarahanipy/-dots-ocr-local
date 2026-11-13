@@ -71,7 +71,7 @@ jobs:
               direct_import = "from flash_attn import flash_attn_varlen_func"
 
               if direct_import in source:
-                  safe_import = "\\n".join([
+                  safe_import = "\n".join([
                       "flash_attn_available = True",
                       "try:",
                       "    from flash_attn import flash_attn_varlen_func",
@@ -85,10 +85,10 @@ jobs:
                   class_pos = source.find("class DotsVisionBlock")
                   init_pos = source.find("        super().__init__()", class_pos)
                   if init_pos >= 0:
-                      line_end = source.find("\\n", init_pos)
+                      line_end = source.find("\n", init_pos)
                       if line_end < 0:
                           raise SystemExit(f"Could not locate initializer line ending in {path}")
-                      line_start = source.rfind("\\n", 0, init_pos) + 1
+                      line_start = source.rfind("\n", 0, init_pos) + 1
                       indent = source[line_start:init_pos]
                       fallback_lines = [
                           indent + 'if attn_implementation == "flash_attention_2" and not flash_attn_available:',
@@ -97,7 +97,7 @@ jobs:
                           indent + 'if attn_implementation == "ascend_fa":',
                           indent + '    attn_implementation = "eager"',
                       ]
-                      source = source[:line_end + 1] + "\\n".join(fallback_lines) + "\\n" + source[line_end + 1:]
+                      source = source[:line_end + 1] + "\n".join(fallback_lines) + "\n" + source[line_end + 1:]
 
               try:
                   ast.parse(source)
