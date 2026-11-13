@@ -50,67 +50,46 @@ jobs:
         working-directory: vendor/dots.ocr
         run: python tools/download_model.py
 
-      - name: Patch Dots vision attention for CPU-only runtime
+      - name: Configure Dots for CPU attention
         run: |
           python - <<'PY'
           import ast
+          import json
           from pathlib import Path
 
-          roots = [Path("vendor/dots.ocr/weights/DotsMOCR"), Path("vendor/dots.ocr")]
-          files = []
-          for root in roots:
-              if root.exists():
-                  files.extend(root.rglob("modeling_dots_vision.py"))
+          model_dir = Path("vendor/dots.ocr/weights/DotsMOCR")
+          config_path = model_dir / "config.json"
+          if not config_path.exists():
+              raise SystemExit(f"Model config not found: {config_path}")
+
+          config = json.loads(config_path.read_text(encoding="utf-8"))
+          vision_config = config.setdefault("vision_config", {})
+          vision_config["attn_implementation"] = "eager"
+          config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+          print("Set vision_config.attn_implementation=eager")
+
+          files = list(model_dir.rglob("modeling_dots_vision.py"))
           if not files:
-              raise SystemExit("Could not find modeling_dots_vision.py in downloaded Dots model files")
+              raise SystemExit("Could not find modeling_dots_vision.py in model directory")
 
           patched = 0
           for path in files:
               source = path.read_text(encoding="utf-8")
               original = source
-              direct_import = "from flash_attn import flash_attn_varlen_func"
-
-              if direct_import in source:
-                  safe_import = "\n".join([
-                      "flash_attn_available = True",
-                      "try:",
-                      "    from flash_attn import flash_attn_varlen_func",
-                      "except ImportError:",
-                      "    flash_attn_available = False",
-                      "    flash_attn_varlen_func = None",
-                  ])
-                  source = source.replace(direct_import, safe_import, 1)
-
-              if "class DotsVisionBlock" in source and "FlashAttention unavailable; using eager CPU attention" not in source:
-                  class_pos = source.find("class DotsVisionBlock")
-                  init_pos = source.find("        super().__init__()", class_pos)
-                  if init_pos >= 0:
-                      line_end = source.find("\n", init_pos)
-                      if line_end < 0:
-                          raise SystemExit(f"Could not locate initializer line ending in {path}")
-                      line_start = source.rfind("\n", 0, init_pos) + 1
-                      indent = source[line_start:init_pos]
-                      fallback_lines = [
-                          indent + 'if attn_implementation == "flash_attention_2" and not flash_attn_available:',
-                          indent + '    attn_implementation = "eager"',
-                          indent + '    print("FlashAttention unavailable; using eager CPU attention")',
-                          indent + 'if attn_implementation == "ascend_fa":',
-                          indent + '    attn_implementation = "eager"',
-                      ]
-                      source = source[:line_end + 1] + "\n".join(fallback_lines) + "\n" + source[line_end + 1:]
-
-              try:
-                  ast.parse(source)
-              except SyntaxError as exc:
-                  raise SystemExit(f"Patched Python syntax error in {path}: {exc}")
-
+              source = source.replace(
+                  "from flash_attn import flash_attn_varlen_func",
+                  "try:\\n    from flash_attn import flash_attn_varlen_func\\nexcept ImportError:\\n    flash_attn_varlen_func = None",
+                  1,
+              )
+              ast.parse(source)
               if source != original:
                   path.write_text(source, encoding="utf-8")
                   patched += 1
-                  print(f"Patched CPU fallback: {path}")
+                  print(f"Made FlashAttention import optional: {path}")
+              else:
+                  print(f"No direct FlashAttention import to patch: {path}")
 
-          if patched == 0:
-              raise SystemExit("No patch applied; the downloaded model may already contain a CPU fallback.")
+          print(f"Vision files checked: {len(files)}; files changed: {patched}")
           PY
 
       - name: Create a synthetic OCR test image
