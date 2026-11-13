@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dots OCR | پردازش اسناد محلی</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">D</div><div><b>Dots OCR</b><small>LOCAL DOCUMENT AI</small></div></div>
+    <div class="side-label">محیط کار</div>
+    <a class="nav active" href="#"><span>▦</span> پردازش اسناد</a>
+    <a class="nav" href="#history"><span>◷</span> تاریخچه پردازش</a>
+    <div class="side-bottom">
+      <div class="privacy"><span class="dot"></span><div><b>پردازش محلی</b><small>فایل‌ها از سیستم خارج نمی‌شوند</small></div></div>
+      <div class="version">نسخه 0.1.0 · CPU Mode</div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="eyebrow">DOCUMENT INTELLIGENCE</div><h1>استخراج هوشمند متن اسناد</h1><p>تصاویر و PDFها را با موتور Dots OCR روی کامپیوتر خودت پردازش کن.</p></div>
+      <div class="status-pill" id="systemStatus"><i></i> در حال بررسی سیستم</div>
+    </header>
+    <section class="metrics">
+      <div class="metric"><span>موتور پردازش</span><b>Dots OCR</b><small>Vision Language Model</small></div>
+      <div class="metric"><span>شتاب‌دهنده</span><b>CPU</b><small>بدون نیاز به کارت گرافیک</small></div>
+      <div class="metric"><span>محل ذخیره‌سازی</span><b>Local</b><small>SQLite + فایل‌های محلی</small></div>
+    </section>
+    <section class="workspace">
+      <div class="section-head"><div><h2>سند جدید</h2><p>فایل تصویر یا PDF را برای استخراج متن انتخاب کن.</p></div><span class="tag">پردازش تک‌سندی</span></div>
+      <div class="dropzone" id="dropzone">
+        <div class="upload-icon">↑</div>
+        <h3>فایل را اینجا رها کن</h3>
+        <p>یا از روی کامپیوتر انتخاب کن</p>
+        <label class="choose-btn">انتخاب فایل<input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"></label>
+        <small>PDF، PNG، JPG، TIFF · حداکثر ۱۰ صفحه در هر PDF</small>
+      </div>
+      <div id="selectedFile" class="selected-file hidden"></div>
+      <div id="jobPanel" class="job-panel hidden">
+        <div class="job-head"><div><b id="jobName">در حال پردازش</b><small id="jobState">در صف پردازش</small></div><span id="jobPercent">0%</span></div>
+        <div class="progress"><i id="progressBar"></i></div>
+        <div id="jobError" class="error hidden"></div>
+      </div>
+    </section>
+    <section class="result-section hidden" id="resultSection">
+      <div class="section-head"><div><h2>نتیجه استخراج</h2><p>متن استخراج‌شده را بررسی و خروجی را ذخیره کن.</p></div><div class="exports"><button id="copyBtn" class="secondary">کپی متن</button><a id="mdLink" class="secondary link-btn">دانلود Markdown</a><a id="jsonLink" class="secondary link-btn">دانلود JSON</a></div></div>
+      <pre id="resultText" class="result-text"></pre>
+    </section>
+    <section id="history" class="history">
+      <div class="section-head"><div><h2>آخرین پردازش‌ها</h2><p>فهرست اسناد ثبت‌شده روی همین سیستم.</p></div></div>
+      <div id="historyList" class="history-list"><div class="empty">هنوز سندی پردازش نشده است.</div></div>
+    </section>
+    <footer>Dots OCR Local · نسخه آزمایشی · اطلاعات اسناد روی همین کامپیوتر نگهداری می‌شود.</footer>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
