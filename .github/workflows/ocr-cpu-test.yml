@@ -56,15 +56,15 @@ jobs:
           from pathlib import Path
 
           roots = [Path("vendor/dots.ocr/weights/DotsMOCR"), Path("vendor/dots.ocr")]
-          matches = []
+          files = []
           for root in roots:
               if root.exists():
-                  matches.extend(root.rglob("modeling_dots_vision.py"))
-          if not matches:
+                  files.extend(root.rglob("modeling_dots_vision.py"))
+          if not files:
               raise SystemExit("Could not find modeling_dots_vision.py in downloaded Dots model files")
 
           patched = 0
-          for path in matches:
+          for path in files:
               source = path.read_text(encoding="utf-8")
               original = source
 
@@ -78,18 +78,23 @@ jobs:
               if direct_import in source:
                   source = source.replace(direct_import, safe_import, 1)
 
-              fallback_anchor = '        super().__init__()\\n'
-              block_anchor = 'class DotsVisionBlock'
-              if block_anchor in source and 'flash_attn_available' not in source:
-                  start = source.index(block_anchor)
-                  pos = source.index(fallback_anchor, start) + len(fallback_anchor)
-                  fallback = '''\n        if attn_implementation == "flash_attention_2" and not flash_attn_available:
+              if "not flash_attn_available" not in source:
+                  class_pos = source.find("class DotsVisionBlock")
+                  if class_pos < 0:
+                      raise SystemExit(f"DotsVisionBlock not found in {path}")
+                  init_pos = source.find("        super().__init__()", class_pos)
+                  if init_pos < 0:
+                      raise SystemExit(f"Block initializer not found in {path}")
+                  insert_pos = init_pos + len("        super().__init__()")
+                  fallback = '''
+          
+                  if attn_implementation == "flash_attention_2" and not flash_attn_available:
                       attn_implementation = "eager"
                       print("FlashAttention unavailable; using eager CPU attention")
                   if attn_implementation == "ascend_fa":
                       attn_implementation = "eager"
           '''
-                  source = source[:pos] + fallback + source[pos:]
+                  source = source[:insert_pos] + fallback + source[insert_pos:]
 
               if source != original:
                   path.write_text(source, encoding="utf-8")
@@ -97,7 +102,7 @@ jobs:
                   print(f"Patched CPU fallback: {path}")
 
           if patched == 0:
-              raise SystemExit("No patch applied. Model source layout differs from expected version.")
+              raise SystemExit("No patch applied; the downloaded model may already contain a CPU fallback.")
           PY
 
       - name: Create a synthetic OCR test image
